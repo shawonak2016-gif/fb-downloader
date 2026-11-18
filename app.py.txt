@@ -1,0 +1,259 @@
+from flask import Flask, request, jsonify, render_template_string
+from flask_cors import CORS
+import yt_dlp
+
+app = Flask(__name__)
+CORS(app)
+
+HTML_PAGE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FBDown - Facebook Video Downloader (HD & MP4)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans">
+
+    <!-- Navbar -->
+    <nav class="bg-white border-b border-slate-200 sticky top-0 z-50">
+        <div class="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 text-2xl font-extrabold text-blue-600">
+                <i class="fa-brands fa-facebook text-3xl"></i>
+                <span>FB<span class="text-slate-900">Down</span></span>
+            </a>
+            <span class="text-xs bg-blue-100 text-blue-700 font-semibold px-3 py-1 rounded-full">Free HD Downloader</span>
+        </div>
+    </nav>
+
+    <!-- Hero & Input Section -->
+    <section class="bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 text-white py-14 px-4">
+        <div class="max-w-3xl mx-auto text-center">
+            <h1 class="text-3xl sm:text-4xl font-extrabold mb-3">Facebook Video Downloader</h1>
+            <p class="text-blue-100 mb-8">Download Facebook Videos & Reels in 1080p Full HD, 720p HD, or SD MP4</p>
+
+            <div class="bg-white p-2 rounded-2xl shadow-xl flex flex-col sm:flex-row gap-2">
+                <div class="relative flex-1 flex items-center">
+                    <input type="text" id="fbUrl" placeholder="Paste Facebook video or Reels link here..." 
+                        class="w-full pl-4 pr-20 py-3.5 text-slate-800 rounded-xl focus:outline-none text-base">
+                    <button onclick="pasteLink()" class="absolute right-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg">
+                        <i class="fa-regular fa-clipboard mr-1"></i> Paste
+                    </button>
+                </div>
+                <button onclick="fetchVideo()" id="downloadBtn" 
+                    class="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-8 py-3.5 rounded-xl transition flex items-center justify-center gap-2 cursor-pointer">
+                    <i class="fa-solid fa-download"></i>
+                    <span>Download</span>
+                </button>
+            </div>
+            <p id="errorMsg" class="text-amber-300 text-sm mt-3 hidden"></p>
+        </div>
+    </section>
+
+    <!-- Loading Spinner -->
+    <div id="loader" class="hidden max-w-2xl mx-auto mt-10 text-center px-4">
+        <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent"></div>
+        <p class="mt-3 text-slate-600 font-medium">Fetching video links from Facebook... Please wait.</p>
+    </div>
+
+    <!-- Video Result Section -->
+    <section id="resultBox" class="hidden max-w-3xl mx-auto mt-8 px-4">
+        <div class="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden p-6">
+            <div class="flex flex-col sm:flex-row gap-5 items-center mb-6">
+                <img id="videoThumb" src="" alt="Thumbnail" class="w-full sm:w-48 h-32 object-cover rounded-xl bg-slate-200">
+                <div class="flex-1 text-center sm:text-left">
+                    <h2 id="videoTitle" class="font-bold text-lg text-slate-800 line-clamp-2">Facebook Video</h2>
+                    <p id="videoDuration" class="text-sm text-slate-500 mt-1"></p>
+                </div>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-100 text-slate-600 text-sm">
+                            <th class="py-3 px-4 rounded-tl-lg">Quality</th>
+                            <th class="py-3 px-4">Format</th>
+                            <th class="py-3 px-4 text-right rounded-tr-lg">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="downloadLinks" class="divide-y divide-slate-200 text-sm">
+                        <!-- Links will be injected here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- How to Use Guide -->
+    <section class="max-w-4xl mx-auto py-14 px-4">
+        <h2 class="text-2xl font-bold text-center mb-8">How to Download Facebook Videos?</h2>
+        <div class="grid sm:grid-cols-3 gap-6 text-center">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">1</div>
+                <h3 class="font-bold mb-2">Copy Video Link</h3>
+                <p class="text-sm text-slate-600">Open Facebook, click Share on the video you want, and select Copy Link.</p>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">2</div>
+                <h3 class="font-bold mb-2">Paste URL Above</h3>
+                <p class="text-sm text-slate-600">Paste the copied link into the input box above and hit the Download button.</p>
+            </div>
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <div class="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 font-bold text-lg">3</div>
+                <h3 class="font-bold mb-2">Save MP4 File</h3>
+                <p class="text-sm text-slate-600">Choose your preferred quality (HD or SD) and save the video to your device.</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="bg-slate-900 text-slate-400 text-center py-6 text-sm">
+        <p>© 2026 FBDown - Facebook Video Downloader. Not affiliated with Meta Platforms, Inc.</p>
+    </footer>
+
+    <script>
+        async function pasteLink() {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById('fbUrl').value = text;
+            } catch (err) {
+                alert('Please paste the link manually (Ctrl+V or long press).');
+            }
+        }
+
+        async function fetchVideo() {
+            const url = document.getElementById('fbUrl').value.trim();
+            const errorMsg = document.getElementById('errorMsg');
+            const loader = document.getElementById('loader');
+            const resultBox = document.getElementById('resultBox');
+            const btn = document.getElementById('downloadBtn');
+
+            errorMsg.classList.add('hidden');
+            resultBox.classList.add('hidden');
+
+            if (!url || (!url.includes('facebook.com') && !url.includes('fb.watch'))) {
+                errorMsg.textContent = 'Please enter a valid Facebook video or Reels link!';
+                errorMsg.classList.remove('hidden');
+                return;
+            }
+
+            loader.classList.remove('hidden');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+
+                const data = await response.json();
+                loader.classList.add('hidden');
+                btn.disabled = false;
+
+                if (data.error) {
+                    errorMsg.textContent = data.error;
+                    errorMsg.classList.remove('hidden');
+                    return;
+                }
+
+                document.getElementById('videoTitle').textContent = data.title || 'Facebook Video';
+                document.getElementById('videoThumb').src = data.thumbnail || 'https://via.placeholder.com/300x180?text=Facebook+Video';
+                document.getElementById('videoDuration').textContent = data.duration ? `Duration: ${data.duration}` : '';
+
+                const tbody = document.getElementById('downloadLinks');
+                tbody.innerHTML = '';
+
+                data.formats.forEach(item => {
+                    const row = `
+                        <tr>
+                            <td class="py-3.5 px-4 font-semibold text-slate-800">${item.quality}</td>
+                            <td class="py-3.5 px-4 text-slate-600 uppercase">${item.ext}</td>
+                            <td class="py-3.5 px-4 text-right">
+                                <a href="${item.url}" target="_blank" download="fb_video.mp4" 
+                                   class="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg transition">
+                                    <i class="fa-solid fa-download"></i> Download
+                                </a>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
+
+                resultBox.classList.remove('hidden');
+            } catch (err) {
+                loader.classList.add('hidden');
+                btn.disabled = false;
+                errorMsg.textContent = 'Server error! Please try again later.';
+                errorMsg.classList.remove('hidden');
+            }
+        }
+    </script>
+</body>
+</html>
+"""
+
+@app.route('/')
+def home():
+    return render_template_string(HTML_PAGE)
+
+@app.route('/api/download', methods=['POST'])
+def get_video():
+    data = request.get_json()
+    video_url = data.get('url')
+
+    if not video_url:
+        return jsonify({'error': 'No URL provided'}), 400
+
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'format': 'best',
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(video_url, download=False)
+            formats_list = []
+
+            for f in info.get('formats', []):
+                if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('url'):
+                    height = f.get('height')
+                    quality_label = f"{height}p (HD)" if height and height >= 720 else (f"{height}p (SD)" if height else "Standard MP4")
+                    formats_list.append({
+                        'quality': quality_label,
+                        'ext': f.get('ext', 'mp4'),
+                        'url': f.get('url')
+                    })
+
+            if not formats_list and info.get('url'):
+                formats_list.append({
+                    'quality': 'Best Available MP4',
+                    'ext': 'mp4',
+                    'url': info.get('url')
+                })
+
+            # Remove duplicate qualities
+            seen = set()
+            unique_formats = []
+            for item in reversed(formats_list):
+                if item['quality'] not in seen:
+                    seen.add(item['quality'])
+                    unique_formats.append(item)
+
+            duration_sec = info.get('duration')
+            duration_str = f"{int(duration_sec // 60)}:{int(duration_sec % 60):02d}" if duration_sec else ""
+
+            return jsonify({
+                'title': info.get('title', 'Facebook Video'),
+                'thumbnail': info.get('thumbnail', ''),
+                'duration': duration_str,
+                'formats': unique_formats
+            })
+
+    except Exception as e:
+        return jsonify({'error': 'Could not fetch video. Make sure the video is Public and the link is correct.'}), 400
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
